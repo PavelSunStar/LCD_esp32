@@ -6,14 +6,14 @@
 
 #ifdef LCD_DRIVER_VGA
     #include "esp_lcd_panel_rgb.h"
-        
+/*        
     struct Mode {
         int pclk_hz;
         int hRes, hFront, hSync, hBack, hPol;
         int vRes, vFront, vSync, vBack, vPol;
     };
     inline Mode MODE640x480_60Hz =  {25000000, 640, 16, 96, 48, 1, 480, 10, 2, 33, 1};    
-
+*/
 
     class LCD_esp32;
 
@@ -29,7 +29,7 @@
         private:
             bool selectMode(Screen_mode m);
             int optimal_bounce_buffer_px();
-            bool setRGBPanel();
+            bool setRGBPanel(uint8_t panel_bpp);
             //bool regSemaphore();
             void regCallBack();
             bool initPanel();
@@ -48,10 +48,42 @@
             int _copyBytes;
             int _copyBytes2x;
             int _skip;
-            
+            int _bounceBufferSize_px;
+
             Mode _m = {};
             LCD_esp32 &_lcd;
     };
 
     
 #endif
+
+/*
+esp_lcd_rgb_panel_config_t panel_config = {
+        .clk_src = LCD_CLK_SRC_DEFAULT,
+        .data_width = (uint8_t)bits,           // 8 или 16
+        .bits_per_pixel = (uint8_t)bits,
+        .hsync_gpio_num = pinConfig.hSync,
+        .vsync_gpio_num = pinConfig.vSync,
+        .de_gpio_num = -1,                     // VGA обычно без DE
+        .pclk_gpio_num = -1,                   // для VGA PCLK не нужен
+        .disp_gpio_num = -1,
+        .timings = {
+            .pclk_hz = vgaMode.frequency,
+            .h_res = vgaMode.hRes,
+            .v_res = vgaMode.vRes,
+            .hsync_pulse_width = vgaMode.hSync,
+            .hsync_back_porch = vgaMode.hBack,
+            .hsync_front_porch = vgaMode.hFront,
+            .vsync_pulse_width = vgaMode.vSync,
+            .vsync_back_porch = vgaMode.vBack,
+            .vsync_front_porch = vgaMode.vFront,
+            .flags = {
+                .hsync_idle_pol = vgaMode.hPol ^ 1,
+                .vsync_idle_pol = vgaMode.vPol ^ 1,
+            }
+        },
+        .flags = {
+            .fb_in_psram = usePsram,
+        }
+    };
+*/

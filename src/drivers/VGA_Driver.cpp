@@ -49,77 +49,74 @@ bool VGA_Driver::selectMode(Screen_mode m){
     return true;
 }
 
-bool VGA_Driver::init(Screen_mode m, bool usePal, uint8_t bpp, bool dBuff){
+bool VGA_Driver::init(Screen_mode m, bool usePal, uint8_t bpp, bool dBuff) {
     auto& s = _lcd._scr;
 
-s.usePal = usePal;
-if (!selectMode(m)) return (s.inited = false); 
-
-if (bpp != _8BIT && bpp != _16BIT) return (s.inited = false);
-
-// ВАЖНО: pal выводит наружу RGB565
-s.bpp = usePal ? _16BIT : bpp;
-s.dBuff = usePal ? true : dBuff;
-
-Serial.println("\n[VGA] Starting...");
-_lcd.setScreenDimentions(_m.hRes, _m.vRes);
-
-if (!setRGBPanel()) {
-    Serial.println("ERROR: setRGBPanel failed");
-    return (s.inited = false);
-}    
-/*
-    s.usePal = usePal;
     if (!selectMode(m)) return (s.inited = false);
-    if (_m.pclk_hz == 0) return (s.inited = false);
     if (bpp != _8BIT && bpp != _16BIT) return (s.inited = false);
-    
-    s.bpp = bpp;
-    s.dBuff = dBuff;
-    Serial.println("\n[VGA] Starting...");
-    _lcd.setScreenDimentions(_m.hRes, _m.vRes);
-    Serial.println("[VGA] screen: lcd_panel_rgb");
-    Serial.printf("[VGA] resolution: %dx%d\n", s.width, s.height);
-    Serial.printf("[VGA] drawBuffer size: %u bytes\n", (uint32_t)s.fullSize);
 
-    if (!setRGBPanel()){
-        Serial.println("ERROR: setRGBPanel failed"); 
+    Serial.println("\n[VGA] Starting...");
+
+    s.usePal = usePal;
+
+    // draw buffer format
+    if (s.usePal) {
+        s.bpp = _8BIT;      // framebuffer хранит индексы палитры
+        s.shift = 0;
+        s.dBuff = true;     // palette mode лучше всегда double buffer
+    } else {
+        s.bpp = bpp;
+        s.shift = (bpp == _16BIT) ? 1 : 0;
+        s.dBuff = dBuff;
+    }
+
+    _lcd.setScreenDimentions(_m.hRes, _m.vRes);
+
+    // output format for RGB panel
+    uint8_t panel_bpp = s.usePal ? _16BIT : s.bpp;
+
+    if (!setRGBPanel(panel_bpp)) {
+        Serial.println("ERROR: setRGBPanel failed");
         return (s.inited = false);
     }
-*/
-    // Allocate memory for buffer
-    size_t req;
-    if (s.usePal){
-        //s.bpp = _16BIT;
-        //s.dBuff = true;
-        int mul = scaleMul[s.scale];
-        s.pal = (uint16_t*)malloc(256 * mul * sizeof(uint16_t));
-        if (!s.pal) return (s.inited = false);
 
-        req = s.size;
-        s.fb0 = (uint8_t*) _lcd.allocateMemory(req, true);
-        s.fb1 = (uint8_t*) _lcd.allocateMemory(req, true);         
+    size_t req = 0;
+
+    if (s.usePal) {
+        int mul = scaleMul[s.scale];
+
+        s.pal = (uint16_t*)malloc(256 * mul * sizeof(uint16_t));
+        if (!s.pal) {
+            Serial.println("ERROR: palette alloc failed");
+            return (s.inited = false);
+        }
+
+        req = s.size; // 8-bit index buffer
+        s.fb0 = (uint8_t*)_lcd.allocateMemory(req, true);
+        s.fb1 = (uint8_t*)_lcd.allocateMemory(req, true);
     } else {
-        req = s.fullSize;        
-        if (s.dBuff){
-            s.fb0 = (uint8_t*) _lcd.allocateMemory(req, true);
-            s.fb1 = (uint8_t*) _lcd.allocateMemory(req, true);        
-        } else {
-            s.fb0 = (uint8_t*) _lcd.allocateMemory(req, true);
-        }          
-    }  
-    if ((s.dBuff && (!s.fb0 || !s.fb1)) || (!s.dBuff && !s.fb0) || (usePal && (!s.fb0 || !s.fb1))){
+        req = s.fullSize;
+
+        s.fb0 = (uint8_t*)_lcd.allocateMemory(req, true);
+
+        if (s.dBuff) {
+            s.fb1 = (uint8_t*)_lcd.allocateMemory(req, true);
+        }
+    }
+
+    if (!s.fb0 || ((s.usePal || s.dBuff) && !s.fb1)) {
         Serial.println("ERROR: allocateMemory failed");
         return (s.inited = false);
     }
+
     Serial.println("Alloc...Ok");
 
-    if (!_lcd.setBufferAddr()){
+    if (!_lcd.setBufferAddr()) {
         Serial.println("ERROR: setBufferAddr failed");
         return (s.inited = false);
     }
 
-    if (s.dBuff) {
+    if (s.usePal || s.dBuff) {
         if (!_lcd.regSemaphore()) return (s.inited = false);
     } else {
         _lcd._sem_vsync_end = nullptr;
@@ -127,10 +124,11 @@ if (!setRGBPanel()) {
     }
 
     regCallBack();
-    if (!initPanel()){
+
+    if (!initPanel()) {
         Serial.println("ERROR: initPanel failed");
         return (s.inited = false);
-    }    
+    }
 
     Serial.println("VGA init...done\n");
     return (s.inited = true);
@@ -141,7 +139,7 @@ int VGA_Driver::optimal_bounce_buffer_px(){
 
     int res = 0;
     if (_m.hRes == 640 && _m.vRes == 480) {
-        res = 30720 >> (s.usePal ? 0 : s.shift);   // 16bit = 15360 px, 8bit = 30720 px
+        res = 30720 >> s.shift;   // 16bit = 15360 px, 8bit = 30720 px
     }
 
     _lastPos = _m.hRes * _m.vRes - res;
@@ -151,10 +149,10 @@ int VGA_Driver::optimal_bounce_buffer_px(){
     _copyBytes2x = _copyBytes << 1;
     _skip = (_m.hRes >> 2) << s.shift;
 
-    return res;
+    return (_bounceBufferSize_px = res);
 }
 
-bool VGA_Driver::setRGBPanel(){
+bool VGA_Driver::setRGBPanel(uint8_t panel_bpp){
     auto& m = _m;
     auto& s = _lcd._scr;
     auto& p = _lcd._pins;
@@ -183,16 +181,17 @@ bool VGA_Driver::setRGBPanel(){
     panel_config.timings.flags.pclk_idle_high   = true;
 
     //Panel config
-    panel_config.data_width             = s.bpp;        
-    panel_config.bits_per_pixel         = s.bpp;   
+    panel_config.data_width             = panel_bpp;        
+    panel_config.bits_per_pixel         = panel_bpp;   
     panel_config.num_fbs                = 0;
     panel_config.bounce_buffer_size_px  = optimal_bounce_buffer_px();
     panel_config.sram_trans_align       = _lcd._sramAlign;
     panel_config.psram_trans_align      = _lcd._psramAlign;
+    Serial.printf("Align sram: %d, psram: %d\n", _lcd._sramAlign, _lcd._psramAlign);
     //panel_config.dma_burst_size = 64;
 
     //Pins config
-    if (s.bpp == _16BIT/* || _usePal*/){
+    if (panel_bpp == _16BIT){
         // B0..B4
         for (int i = 0; i < 5; i++)
             panel_config.data_gpio_nums[i] = p.b[i];
@@ -238,66 +237,6 @@ bool VGA_Driver::setRGBPanel(){
     return true;
 }
 
-    // ESP32-P4 RGB workaround:
-    // controller behaves as if output starts 8 pixels later
-    // and tail must be taken from next DMA chunk
-
-    // ESP32-P4 workaround:
-    // RGB output behaves as if each DMA chunk starts 8 pixels late.
-    // To compensate, bounce buffer is assembled from:
-    // 1) main part shifted by 8 pixels
-    // 2) tail taken from the next logical source chunk
-    // Separate paths are required for scale 0/1/2.
-
-    // ESP32-P4 RGB / bounce buffer workaround
-    //
-    // Problem:
-    // On ESP32-S3 the RGB bounce callback data is displayed correctly,
-    // but on ESP32-P4 the visible image is shifted horizontally by 8 pixels.
-    // At first this looks like a timing / HSYNC / porch problem, but changing
-    // VGA timings does not fix it.
-    //
-    // Observation:
-    // The issue is not caused by the source framebuffer contents themselves.
-    // Even when writing test data directly into bounce_buf, ESP32-P4 still shows
-    // the same 8-pixel horizontal misalignment.
-    //
-    // Actual behavior:
-    // ESP32-P4 does not behave like a simple cyclic 8-pixel line shift.
-    // Instead, each output chunk behaves as if the first 8 pixels of the current
-    // logical block are skipped, and the missing tail must be taken from the next
-    // logical source block.
-    //
-    // In other words, the displayed line is effectively assembled as:
-    //   [current block starting from pixel +8] + [tail from next block]
-    //
-    // Because of this, a normal memcpy or a simple rotate of the last 8 pixels
-    // is not sufficient. A dedicated ESP32-P4 path is required when filling
-    // bounce_buf, including separate handling for scale 0 / 1 / 2.
-    //
-    // Notes:
-    // - This workaround is only needed on ESP32-P4.
-    // - ESP32-S3 works correctly with the normal bounce buffer logic.
-    // - The root cause appears to be inside the ESP32-P4 RGB/LCD_COM/DMA path.
-/*
-bool VGA_Driver::regSemaphore(){
-    if (!_lcd._scr.dBuff){
-        Serial.println("Double buffer not selected.");
-        return true;
-    }
-
-    sem_vsync_end = xSemaphoreCreateBinary();
-    sem_gui_ready = xSemaphoreCreateBinary();
-
-    if (!sem_vsync_end || !sem_gui_ready){
-        Serial.println("Error: Semaphores init fail.");
-        return false;
-    }
-
-    Serial.println("Registered semaphores...Ok");
-    return true;
-}
-*/
 void VGA_Driver::regCallBack(){
     esp_lcd_rgb_panel_event_callbacks_t cb = {
         .on_color_trans_done = nullptr,
@@ -327,6 +266,7 @@ bool VGA_Driver::initPanel(){
         return false;
     }
 
+    Serial.println(_bounceBufferSize_px);
     Serial.println("Init panel complete...Ok");
     return true;
 }
@@ -335,7 +275,7 @@ bool IRAM_ATTR VGA_Driver::on_vsync(esp_lcd_panel_handle_t panel, const esp_lcd_
     VGA_Driver* vga = (VGA_Driver*)user_ctx;
 
     vga->_lcd._timer++;
-
+    //auto& s = vga->_lcd._scr;
     return false;
 }
 
@@ -349,13 +289,6 @@ bool IRAM_ATTR VGA_Driver::on_bounce_empty_p4(esp_lcd_panel_handle_t panel, void
     int position = pos_px << shift;
     int fill = position + len_bytes + bytes;    
 
-/*    
-    uint8_t* dest = (uint8_t*)bounce_buf;
-    uint8_t* sour = (uint8_t*)s.fb0 + (pos_px << (s.shift));
-
-    if (fill <= s.fullSize) memcpy(dest + fix, sour + len_bytes, bytes);        
-        memcpy(dest, sour + bytes, fix);
-*/
     if (s.scale == 0){
         uint8_t *dest = (uint8_t*)bounce_buf;
         uint8_t *sour = (uint8_t*)s.fb0 + (pos_px << s.shift);
@@ -511,13 +444,12 @@ bool IRAM_ATTR VGA_Driver::on_bounce_empty_p4(esp_lcd_panel_handle_t panel, void
         }
     }
 
-    BaseType_t hp_task_woken = pdFALSE;
-    if (pos_px >= vga->_lastPos && s.dBuff) {
+    BaseType_t hp_task_woken = pdFALSE;    
+    if (s.dBuff && pos_px >= vga->_lastPos){
         if (xSemaphoreTakeFromISR(vga->_lcd._sem_gui_ready, &hp_task_woken) == pdTRUE){
-            auto& s = vga->_lcd._scr;
             std::swap(s.fb0, s.fb1);
-            std::swap(s.fLine8, s.bLine8);
-            std::swap(s.fLine16, s.bLine16);
+            if (s.bpp == _16BIT) std::swap(s.fLine16, s.bLine16);        
+            if (s.usePal || s.bpp == _8BIT) std::swap(s.fLine8, s.bLine8);        
             xSemaphoreGiveFromISR(vga->_lcd._sem_vsync_end, &hp_task_woken);
         }
     }
@@ -526,9 +458,9 @@ bool IRAM_ATTR VGA_Driver::on_bounce_empty_p4(esp_lcd_panel_handle_t panel, void
 }
 
 bool IRAM_ATTR VGA_Driver::on_bounce_empty_p4_pal(esp_lcd_panel_handle_t panel, void *bounce_buf, int pos_px, int len_bytes, void *user_ctx){
-    VGA_Driver* lcd = (VGA_Driver*) user_ctx;
+    VGA_Driver* vga = (VGA_Driver*) user_ctx;
 
-    auto& s = lcd->_lcd._scr;
+    auto& s = vga->_lcd._scr;
 
     // P4 shift fix: 8 output pixels
     int bytes = 8 << 1;              // 8 pixels * RGB565 2 bytes
@@ -655,12 +587,13 @@ bool IRAM_ATTR VGA_Driver::on_bounce_empty_p4_pal(esp_lcd_panel_handle_t panel, 
         }
     }
 
-    BaseType_t hp_task_woken = pdFALSE;
-    if (pos_px >= lcd->_lastPos && s.dBuff) {
-        if (xSemaphoreTakeFromISR(lcd->_lcd._sem_gui_ready, &hp_task_woken) == pdTRUE) {
+    BaseType_t hp_task_woken = pdFALSE;    
+    if (s.dBuff && pos_px >= vga->_lastPos){
+        if (xSemaphoreTakeFromISR(vga->_lcd._sem_gui_ready, &hp_task_woken) == pdTRUE){
             std::swap(s.fb0, s.fb1);
-            std::swap(s.fLine8, s.bLine8);
-            xSemaphoreGiveFromISR(lcd->_lcd._sem_vsync_end, &hp_task_woken);
+            if (s.bpp == _16BIT) std::swap(s.fLine16, s.bLine16);        
+            if (s.usePal || s.bpp == _8BIT) std::swap(s.fLine8, s.bLine8);        
+            xSemaphoreGiveFromISR(vga->_lcd._sem_vsync_end, &hp_task_woken);
         }
     }
 
