@@ -10,6 +10,8 @@ class Sprite{
 
         bool loadImages(const uint8_t* data);
         void putImage(int x, int y, uint8_t num = 0);
+        void putImage(int x, int y, int w, int h, uint8_t bpp, uint16_t* image);
+        void putSprite(int x, int y, uint16_t maskColor, uint8_t num);
         void putAffineSprite(int dstX, int dstY, float ang = 0, int zoomX = 100, int zoomY = 100, uint16_t maskColor = 0, uint8_t num = 0);
 
     private:

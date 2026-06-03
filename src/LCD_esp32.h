@@ -87,6 +87,8 @@ class LCD_esp32 {
         }
 
         //Screen 
+        bool dBuff()    { return ((_scr.usePal || _scr.dBuff) ? true : false); }
+        void* BackBuf() { return ((_scr.usePal || _scr.bpp == _8BIT) ? (void*)_scr.bLine8[0] : (void*)_scr.bLine16[0]); }             
         int BPP()       { return (_scr.usePal ? _8BIT : _scr.bpp); }
         int Width()     { return _scr.width; }
         int Height()    { return _scr.height; }
@@ -106,7 +108,7 @@ class LCD_esp32 {
         uint32_t Timer()    { return _timer; }
 
         void cls(uint16_t col = 0);
-        inline void cls(uint8_t r, uint8_t g, uint8_t b);
+        void cls(uint8_t r, uint8_t g, uint8_t b);
         bool init(Screen_mode m = Mode640x480, bool usePal = false, uint8_t bpp = _16BIT, bool dBuff = false);// { return _drv.init(); } 
         void setViewport(int x0, int y0, int x1, int y1);
         void swap();
@@ -176,6 +178,7 @@ class LCD_esp32 {
         size_t  _sramAlign; 
         size_t  _psramAlign;
 
+        void clsDef(uint16_t col);
         void getAlignSize();
         void setScreenDimentions(int width, int height);
         void* allocateMemory(size_t request, bool psram = true, size_t* outAligned = nullptr);

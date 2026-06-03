@@ -255,61 +255,81 @@ bool LCD_esp32::init(Screen_mode m, bool usePal, uint8_t bpp, bool dBuff){
     return _drv.init(m, usePal, bpp, dBuff); 
 }
 
-void LCD_esp32::cls(uint16_t col){
+void LCD_esp32::cls(uint8_t r, uint8_t g, uint8_t b) {
     auto& s = _scr;
     if (!s.inited) return;
 
-    #if IS_P4
-        if (s.usePal){
-            uint8_t c = (uint8_t)col;
-            uint16_t color = c | (c >> 8);
-            uint8_t r = R16(col);
-            uint8_t g = G16(col);
-            uint8_t b = B16(col); 
-            ppa_fill_oper_config_t cfg = {};
+#if IS_P4
+    if (_ppaFill) {
+        ppa_fill_oper_config_t cfg = {};
 
+        if (s.usePal || s.bpp == _8BIT) {
+
+            // RGB332 -> duplicated byte -> RGB565
+            uint8_t c = rgb888to332(r, g, b);
+            uint16_t color = ((uint16_t)c << 8) | c;
+
+            cfg.fill_argb_color.r = R16(color);
+            cfg.fill_argb_color.g = G16(color);
+            cfg.fill_argb_color.b = B16(color);
+
+            cfg.out.buffer = (void*)s.bLine8[0];
             cfg.fill_block_w = s.width >> 1;
-            cfg.fill_block_h = s.height;
-
-            cfg.out.buffer = s.fb1;
-            cfg.out.buffer_size = s.size;
             cfg.out.pic_w = s.width >> 1;
-            cfg.out.pic_h = s.height;
 
-            cfg.out.block_offset_x = 0;
-            cfg.out.block_offset_y = 0;
-            cfg.out.fill_cm = PPA_FILL_COLOR_MODE_RGB565;
+        } else {
 
-            cfg.fill_argb_color.a = 255;
             cfg.fill_argb_color.r = r;
             cfg.fill_argb_color.g = g;
             cfg.fill_argb_color.b = b;
 
-            cfg.mode = PPA_TRANS_MODE_BLOCKING;
-
-            esp_err_t err = ppa_do_fill(_ppaFill, &cfg);
-            if (err != ESP_OK) {
-                Serial.printf("ppa_do_fill failed: %s\n", esp_err_to_name(err));
-            }   
-            
-            return;            
+            cfg.out.buffer = (void*)s.bLine16[0];
+            cfg.fill_block_w = s.width;
+            cfg.out.pic_w = s.width;
         }
-    #endif
 
-    if (_scr.bpp == _16BIT){
-        uint16_t* scr = (uint16_t*)s.fb1;
+        cfg.out.buffer_size = s.fullSize;
+
+        cfg.out.block_offset_x = 0;
+        cfg.out.block_offset_y = 0;
+
+        cfg.fill_block_h = s.height;
+        cfg.out.pic_h = s.height;
+
+        cfg.fill_argb_color.a = 255;
+
+        cfg.out.fill_cm = PPA_FILL_COLOR_MODE_RGB565;
+        cfg.mode = PPA_TRANS_MODE_BLOCKING;
+
+        esp_err_t err = ppa_do_fill(_ppaFill, &cfg);
+
+        if (err == ESP_OK) return;
+
+        Serial.printf("ppa_do_fill failed: %s\n", esp_err_to_name(err));
+    }
+#endif
+
+    clsDef(rgb888to565(r, g, b));
+}
+
+void LCD_esp32::clsDef(uint16_t col){
+    auto& s = _scr;
+    if (s.usePal || s.bpp == _8BIT){
+        memset(s.bLine8[0], (uint8_t)col, s.size);
+    } else {
+        uint16_t* scr = (uint16_t*)s.bLine16[0];
 
         if ((uint8_t)col == (uint8_t)(col >> 8)){
-            memset(scr, (uint8_t)(col & 0xFF),_scr.fullSize);
+            memset(scr, col , s.fullSize);
         } else {
             int size = 0;
             uint16_t* cpy = scr;
-            while (size++ < _scr.width) *scr++ = col;
+            while (size++ < s.width) *scr++ = col;
 
             int dummy = 1; 
-            int lines = _scr.maxY;  
-            int copyBytes = _scr.lineSize;
-            int offset = _scr.width;
+            int lines = s.maxY;  
+            int copyBytes = s.lineSize;
+            int offset = s.width;
         
             while (lines > 0){ 
                 if (lines >= dummy){
@@ -320,20 +340,63 @@ void LCD_esp32::cls(uint16_t col){
                     offset <<= 1;
                     dummy <<= 1;
                 } else {
-                    copyBytes =_scr.lineSize * lines;
+                    copyBytes =s.lineSize * lines;
                     memcpy(scr, cpy, copyBytes);
                     break;
                 }
             }            
-        }        
-    } else {
-        memset(s.fb1, (uint8_t) col, _scr.fullSize);
+        }
     }
 }
 
-inline void LCD_esp32::cls(uint8_t r, uint8_t g, uint8_t b) {
-    uint16_t col = rgb888to565(r, g, b);
-    cls(col);
+void LCD_esp32::cls(uint16_t col){
+    auto& s = _scr;
+    if (!s.inited) return;
+
+#if IS_P4
+    if (_ppaFill) {
+        ppa_fill_oper_config_t cfg = {};
+
+        if (s.usePal || s.bpp == _8BIT) {
+            uint8_t c = (uint8_t)col;
+            uint16_t color = ((uint16_t)c << 8) | c;   // 0xCCCC
+
+            cfg.fill_argb_color.r = R16(color);
+            cfg.fill_argb_color.g = G16(color);
+            cfg.fill_argb_color.b = B16(color);
+
+            cfg.out.buffer = (void*)s.bLine8[0];
+            cfg.fill_block_w = s.width >> 1;
+            cfg.out.pic_w = s.width >> 1;
+        } else {
+            cfg.fill_argb_color.r = R16(col);
+            cfg.fill_argb_color.g = G16(col);
+            cfg.fill_argb_color.b = B16(col);
+
+            cfg.out.buffer = (void*)s.bLine16[0];
+            cfg.fill_block_w = s.width;
+            cfg.out.pic_w = s.width;
+        }
+
+        cfg.out.buffer_size = s.fullSize;
+        cfg.out.block_offset_x = 0;
+        cfg.out.block_offset_y = 0;
+
+        cfg.fill_block_h = s.height;
+        cfg.out.pic_h = s.height;
+
+        cfg.fill_argb_color.a = 255;
+        cfg.out.fill_cm = PPA_FILL_COLOR_MODE_RGB565;
+        cfg.mode = PPA_TRANS_MODE_BLOCKING;
+
+        esp_err_t err = ppa_do_fill(_ppaFill, &cfg);
+        if (err == ESP_OK) return;
+
+        Serial.printf("ppa_do_fill failed: %s\n", esp_err_to_name(err));
+    }
+#endif
+
+    clsDef(col);
 }
 
 bool LCD_esp32::regSemaphore(){

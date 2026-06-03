@@ -153,18 +153,7 @@ void Sprite::putImage(int x, int y, uint8_t num){
     if (x >= s.x0 && y >= s.y0 && xx <= s.x1 && yy <= s.y1){
         int lines = im.height;
 
-        if (_bpp == _16BIT){
-            uint8_t* img = _buf + im.offset;
-            uint8_t* scr = (uint8_t*)s.bLine16[y] + (x << 1);
-            const int copyBytes = im.width << 1;
-            const int dstSkip = s.lineSize;
-
-            while (lines--){
-                memcpy(scr, img, copyBytes);
-                img += copyBytes;
-                scr += dstSkip;
-            }
-        } else {
+        if (s.usePal || s.bpp == _8BIT){
             uint8_t* img = _buf + im.offset;
             uint8_t* scr = (uint8_t*)s.bLine8[y] + x;
             const int copyBytes = im.width;
@@ -175,7 +164,19 @@ void Sprite::putImage(int x, int y, uint8_t num){
                 img += copyBytes;
                 scr += dstSkip;
             }
+        } else {
+            uint8_t* img = _buf + im.offset;
+            uint8_t* scr = (uint8_t*)s.bLine16[y] + (x << 1);
+            const int copyBytes = im.width << 1;
+            const int dstSkip = s.lineSize;
+
+            while (lines--){
+                memcpy(scr, img, copyBytes);
+                img += copyBytes;
+                scr += dstSkip;
+            }
         }
+
         return;
     }
 
@@ -204,6 +205,122 @@ void Sprite::putImage(int x, int y, uint8_t num){
         memcpy(scr, img, copyX);
         img += imgStep;
         scr += scrStep;
+    }
+}
+
+void Sprite::putImage(int x, int y, int w, int h, uint8_t bpp, uint16_t* image){
+    if (!image) return;
+
+    auto& s = _lcd._scr;
+    if (!s.inited) return;
+    if (bpp != _16BIT) return;
+    if (s.bpp != _16BIT) return;
+
+    int xx = x + w - 1;
+    int yy = y + h - 1;
+
+    if (x > s.x1 || y > s.y1) return;
+    if (xx < s.x0 || yy < s.y0) return;
+
+    int sxl = (x  < s.x0 ? (s.x0 - x)  : 0);
+    int sxr = (xx > s.x1 ? (xx - s.x1) : 0);
+    int syu = (y  < s.y0 ? (s.y0 - y)  : 0);
+    int syd = (yy > s.y1 ? (yy - s.y1) : 0);
+
+    int copyW = w - sxl - sxr;
+    int copyH = h - syu - syd;
+    if (copyW <= 0 || copyH <= 0) return;
+
+    uint16_t* img = image + syu * w + sxl;
+    uint16_t* scr = s.bLine16[y + syu] + (x + sxl);
+
+    while (copyH--){
+        memcpy(scr, img, copyW * 2);
+        img += w;
+        scr += s.width;
+    }
+}
+
+void Sprite::putSprite(int x, int y, uint16_t maskColor, uint8_t num){
+    auto& s = _lcd._scr;    
+    if (!s.inited || !_created || num >= _images) return;
+
+    Image &im = _img[num];
+    if (x > s.x1 || y > s.y1) return;    
+    int xx = x + im.maxX;
+    int yy = y + im.maxY;
+    if (xx < s.x0 || yy < s.y0) return;
+
+    if (x >= s.x0 && y >= s.y0 && xx <= s.x1 && yy <= s.y1){
+        int lines = im.height;  
+        int skip = s.width - im.width;  
+
+        if (s.usePal || s.bpp == _8BIT){
+            uint8_t* img = &_line8[im.offsetLine][0];
+            uint8_t* scr = &s.bLine8[y][x]; 
+
+            while (lines-- > 0){
+                for (int xx = 0; xx < im.width; xx++){
+                    if (*img != maskColor) *scr = *img;
+                    img++;
+                    scr++;
+                }
+                scr += skip;
+            } 
+        } else {
+            uint16_t* img = &_line16[im.offsetLine][0];
+            uint16_t* scr = &s.bLine16[y][x];
+
+            while (lines-- > 0){
+                for (int xx = 0; xx < im.width; xx++){
+                    if (*img != maskColor) *scr = *img;
+                    img++;
+                    scr++;
+                }
+                scr += skip;
+            } 
+        }
+    } else { 
+        int sxl = (x  < s.x0 ? (s.x0 - x)  : 0);
+        int sxr = (xx > s.x1 ? (xx - s.x1) : 0);
+        int syu = (y  < s.y0 ? (s.y0 - y)  : 0);
+        int syd = (yy > s.y1 ? (yy - s.y1) : 0);
+
+        int copyX = im.width  - sxl - sxr;
+        int copyY =  im.height - syu - syd; 
+        if (copyX <= 0 || copyY <= 0) return;   
+        int skipSour = im.width - copyX;
+        int skipScr = s.width - copyX;
+
+        if (s.usePal || s.bpp == _8BIT){
+            uint8_t* img = &_line8[im.offsetLine + syu][sxl];
+            uint8_t* scr = &s.bLine8[y + syu][x + sxl];
+
+            while (copyY-- > 0){
+                for (int xx = 0; xx < copyX; xx++){
+                    if (*img != maskColor) *scr = *img;
+                    img++;
+                    scr++;
+                }
+
+                scr += skipScr;
+                img += skipSour;
+            }   
+        } else {
+            uint16_t* img = &_line16[im.offsetLine + syu][sxl];
+            uint16_t* scr = &s.bLine16[y + syu][x + sxl];
+
+            while (copyY-- > 0){
+                for (int xx = 0; xx < copyX; xx++){
+                    if (*img != maskColor) *scr = *img;
+                    img++;
+                    scr++;
+                }
+
+                scr += skipScr;
+                img += skipSour;
+            } 
+        }
     }
 }
 
